@@ -10,6 +10,7 @@ on:
 jobs:
   build:
     runs-on: windows-2022
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -70,21 +71,25 @@ jobs:
 
       - name: Sign, validate, and stage Xbox package
         shell: pwsh
+        timeout-minutes: 5
         run: |
+          $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"
+          Write-Host "Locating the built x64 MSIX..."
           $project = Get-ChildItem "$env:RUNNER_TEMP\src" -Filter "*.csproj" -Recurse | Select-Object -First 1
-          $package = Get-ChildItem (Join-Path $project.DirectoryName "AppPackages") -Filter "*.msix" -Recurse |
-            Where-Object { $_.Name -match "_x64\.msix$" } | Select-Object -First 1
+          if (-not $project) { throw "Project file not found" }
+          $package = Get-ChildItem (Join-Path $project.DirectoryName "AppPackages") -Filter "*_x64.msix" -Recurse | Select-Object -First 1
           if (-not $package) { throw "The x64 MSIX package was not generated" }
+          Write-Host "Package found: $($package.FullName)"
 
-          $manifest = Join-Path $project.DirectoryName "Package.appxmanifest"
-          [xml]$manifestXml = Get-Content -Raw $manifest
+          [xml]$manifestXml = Get-Content -Raw (Join-Path $project.DirectoryName "Package.appxmanifest")
           $publisher = $manifestXml.Package.Identity.Publisher
           if ([string]::IsNullOrWhiteSpace($publisher)) { throw "Package Publisher is missing" }
 
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE "artifacts"
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
-          # Create a temporary self-signed certificate matching the package Publisher.
+          Write-Host "Creating a temporary test certificate..."
           $cert = New-SelfSignedCertificate -Type Custom -Subject $publisher -KeyUsage DigitalSignature -FriendlyName "AntiMicro Xbox Developer Mode Test" -CertStoreLocation "Cert:\CurrentUser\My" -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3") -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddYears(2)
           $pfxPath = Join-Path $env:RUNNER_TEMP "antimicro-signing.pfx"
           $pfxPassword = [guid]::NewGuid().ToString("N")
@@ -92,27 +97,35 @@ jobs:
           Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $securePassword | Out-Null
           $certificatePath = Join-Path $artifactDir "AntiMicroXboxDev.cer"
           Export-Certificate -Cert $cert -FilePath $certificatePath | Out-Null
-          # Trust this temporary CI certificate locally so SignTool can validate its chain.
-          Import-Certificate -FilePath $certificatePath -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
 
+          Write-Host "Trusting the temporary certificate in the CI user stores..."
+          Import-Certificate -FilePath $certificatePath -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+          Import-Certificate -FilePath $certificatePath -CertStoreLocation "Cert:\CurrentUser\TrustedPeople" | Out-Null
+
+          Write-Host "Locating Windows SDK SignTool..."
           $programFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
-          if ([string]::IsNullOrWhiteSpace($programFilesX86)) { throw "Program Files (x86) path could not be resolved" }
           $sdkBin = Join-Path $programFilesX86 "Windows Kits\10\bin"
           if (-not (Test-Path $sdkBin)) { throw "Windows SDK bin directory not found: $sdkBin" }
-          $signtool = Get-ChildItem $sdkBin -Filter "signtool.exe" -Recurse | Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } | Sort-Object FullName -Descending | Select-Object -First 1
+          $signtool = Get-ChildItem $sdkBin -Filter "signtool.exe" -Recurse -File |
+            Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } |
+            Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) { throw "Windows SDK SignTool was not found" }
-          & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $pfxPassword $package.FullName
-          if ($LASTEXITCODE -ne 0) { throw "MSIX signing failed" }
-          & $signtool.FullName verify /pa /v $package.FullName
-          if ($LASTEXITCODE -ne 0) { throw "MSIX signature verification failed" }
 
+          Write-Host "Signing the MSIX..."
+          & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $pfxPassword $package.FullName
+          if ($LASTEXITCODE -ne 0) { throw "MSIX signing failed with exit code $LASTEXITCODE" }
+
+          Write-Host "Verifying the MSIX signature..."
+          & $signtool.FullName verify /pa /v $package.FullName
+          if ($LASTEXITCODE -ne 0) { throw "MSIX signature verification failed with exit code $LASTEXITCODE" }
+
+          Write-Host "Staging package, certificate, dependencies, and install notes..."
           Copy-Item $package.FullName (Join-Path $artifactDir $package.Name) -Force
           $dependencyDir = Join-Path $package.Directory.FullName "Dependencies\x64"
           if (Test-Path $dependencyDir) {
             New-Item -ItemType Directory -Force -Path (Join-Path $artifactDir "Dependencies\x64") | Out-Null
             Copy-Item (Join-Path $dependencyDir "*") (Join-Path $artifactDir "Dependencies\x64") -Recurse -Force
           }
-
           @"
           AntiMicro Xbox Developer Mode package
           1. Import AntiMicroXboxDev.cer into the Xbox Developer Mode trusted certificates.
@@ -120,8 +133,8 @@ jobs:
           3. Install the x64 MSIX through Xbox Device Portal.
           Note: A successful build does not guarantee every feature or game-level input works on Xbox.
           "@ | Set-Content (Join-Path $artifactDir "INSTALL.txt") -Encoding UTF8
-
           if (-not (Get-ChildItem $artifactDir -File -Recurse | Where-Object { $_.Extension -eq ".msix" })) { throw "Staging validation failed: no MSIX in artifact directory" }
+          Write-Host "Package staging completed successfully."
 
       - uses: actions/upload-artifact@v4
         with:

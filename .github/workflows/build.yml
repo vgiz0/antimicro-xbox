@@ -2,6 +2,10 @@ name: Build AntiMicro MSIX
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build.yml'
+      - 'AntiMicroXboxEdition-MacroPreview-Enhanced.zip'
 
 jobs:
   build:
@@ -15,12 +19,37 @@ jobs:
         shell: pwsh
         run: |
           $zip = Get-ChildItem -Filter "*.zip" | Select-Object -First 1
+          if (-not $zip) { throw "Source ZIP not found" }
           Expand-Archive $zip.FullName "$env:RUNNER_TEMP\src" -Force
 
-      - name: Build
+      - name: Build MSIX without changing source ZIP
         shell: pwsh
         run: |
           $p = Get-ChildItem "$env:RUNNER_TEMP\src" -Filter "*.csproj" -Recurse | Select-Object -First 1
+          if (-not $p) { throw "Project file not found" }
+
+          $manifest = Join-Path $p.DirectoryName "Package.appxmanifest"
+          if (-not (Test-Path $manifest)) {
+            throw "Package.appxmanifest not found beside $($p.Name)"
+          }
+
+          # Add the manifest item only to the temporary extracted project.
+          # The ZIP committed to the repository remains untouched.
+          [xml]$xml = Get-Content $p.FullName
+          $nsUri = $xml.DocumentElement.NamespaceURI
+          $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+          $ns.AddNamespace("msb", $nsUri)
+          $existing = $xml.SelectSingleNode("//msb:AppxManifest", $ns)
+
+          if (-not $existing) {
+            $group = $xml.CreateElement("ItemGroup", $nsUri)
+            $item = $xml.CreateElement("AppxManifest", $nsUri)
+            $item.SetAttribute("Include", "Package.appxmanifest")
+            [void]$group.AppendChild($item)
+            [void]$xml.DocumentElement.AppendChild($group)
+            $xml.Save($p.FullName)
+          }
+
           msbuild $p.FullName /restore /p:Configuration=Release /p:Platform=x64 /p:AppxPackage=true /p:AppxPackageSigningEnabled=false /p:AppxBundle=Never
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

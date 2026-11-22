@@ -1,4 +1,4 @@
-name: Build AntiMicro Xbox MSIX
+name: Build AntiMicro MSIX
 
 on:
   workflow_dispatch:
@@ -6,42 +6,28 @@ on:
 jobs:
   build:
     runs-on: windows-2022
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+      - uses: microsoft/setup-msbuild@v2
 
-      - name: Extract source ZIP
+      - name: Extract ZIP
         shell: pwsh
         run: |
-          $zip = Get-ChildItem -Path . -Filter "*.zip" -File | Select-Object -First 1
-          if (-not $zip) {
-            throw "Source ZIP not found"
-          }
-          Expand-Archive -Path $zip.FullName -DestinationPath "$env:RUNNER_TEMP\source" -Force
+          $zip = Get-ChildItem -Filter "*.zip" | Select-Object -First 1
+          Expand-Archive $zip.FullName "$env:RUNNER_TEMP\src" -Force
 
-      - name: Build x64 package
+      - name: Build
         shell: pwsh
         run: |
-          $sln = Get-ChildItem "$env:RUNNER_TEMP\source" -Filter "*.sln" -Recurse | Select-Object -First 1
-          if (-not $sln) {
-            throw "Visual Studio solution not found"
-          }
+          $p = Get-ChildItem "$env:RUNNER_TEMP\src" -Filter "*.csproj" -Recurse | Select-Object -First 1
+          msbuild $p.FullName /restore /p:Configuration=Release /p:Platform=x64 /p:AppxPackage=true /p:AppxPackageSigningEnabled=false /p:AppxBundle=Never
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          msbuild $sln.FullName /restore /p:Configuration=Release /p:Platform=x64 /p:AppxPackage=true /p:AppxBundle=Never /p:AppxPackageSigningEnabled=false /p:AppxPackageFormat=Msix /m
-
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-
-      - name: Upload build output
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: AntiMicro-Xbox-Build
+          name: AntiMicro-MSIX
           path: |
-            **/AppPackages/**/*.msix
-            **/AppPackages/**/*.appx
+            **/*.msix
+            **/*.appx
           if-no-files-found: error

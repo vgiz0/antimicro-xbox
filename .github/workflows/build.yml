@@ -103,16 +103,26 @@ jobs:
           & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $pfxPassword $package.FullName
           if ($LASTEXITCODE -ne 0) { throw "SignTool sign failed: $LASTEXITCODE" }
 
-          # Attempt 13 stalled while importing the self-signed certificate into Windows trust stores.
-          # Avoid that blocking operation. Verify the embedded signer identity and signature status instead.
-          Write-Host "Checking embedded MSIX signature..."
+          # Trust only this ephemeral CI test certificate, then perform a full signature verification.
+          # This does not create a publicly trusted certificate; the console must separately trust the CER.
+          Write-Host "Adding temporary test certificate to the runner trust stores..."
+          & certutil.exe -addstore -f Root $certificatePath
+          if ($LASTEXITCODE -ne 0) { throw "Could not add test certificate to Root store: $LASTEXITCODE" }
+          & certutil.exe -addstore -f TrustedPeople $certificatePath
+          if ($LASTEXITCODE -ne 0) { throw "Could not add test certificate to TrustedPeople store: $LASTEXITCODE" }
+
+          Write-Host "Verifying MSIX signature and package integrity..."
+          & $signtool.FullName verify /pa /v $package.FullName
+          if ($LASTEXITCODE -ne 0) { throw "SignTool verification failed: $LASTEXITCODE" }
+
           $signature = Get-AuthenticodeSignature -FilePath $package.FullName
-          if (-not $signature.SignerCertificate) { throw "No signer certificate found in MSIX" }
-          if ($signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw "MSIX signer certificate mismatch" }
-          if ($signature.Status -in @("HashMismatch","NotSigned","UnknownError")) {
-            throw "MSIX signature check failed: $($signature.Status) - $($signature.StatusMessage)"
+          if ($signature.Status -ne "Valid") {
+            throw "MSIX signature status is not Valid: $($signature.Status) - $($signature.StatusMessage)"
           }
-          Write-Host "Signer identity confirmed; signature status: $($signature.Status)"
+          if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) {
+            throw "MSIX signer certificate mismatch"
+          }
+          Write-Host "MSIX signature verified successfully."
 
           Copy-Item $package.FullName (Join-Path $artifactDir $package.Name) -Force
           $dependencyDir = Join-Path $package.Directory.FullName "Dependencies\x64"

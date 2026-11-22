@@ -1,0 +1,56 @@
+
+name: Build AntiMicro Xbox MSIX
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Extract source ZIP
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path . -Filter "*.zip" -File | Select-Object -First 1
+          if (-not $zip) {
+            throw "Source ZIP not found"
+          }
+          Expand-Archive -Path $zip.FullName -DestinationPath "$env:RUNNER_TEMP\source" -Force
+
+      - name: Build x64 package
+        shell: pwsh
+        run: |
+          $sln = Get-ChildItem "$env:RUNNER_TEMP\source" -Filter "*.sln" -Recurse | Select-Object -First 1
+          if (-not $sln) {
+            throw "Visual Studio solution not found"
+          }
+
+          msbuild $sln.FullName `
+            /restore `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:AppxPackage=true `
+            /p:AppxBundle=Never `
+            /p:AppxPackageSigningEnabled=false `
+            /p:AppxPackageFormat=Msix `
+            /m
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build failed"
+          }
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: AntiMicro-Xbox-Build
+          path: |
+            **/AppPackages/**/*.msix
+            **/AppPackages/**/*.appx
+          if-no-files-found: error

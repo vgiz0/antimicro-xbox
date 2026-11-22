@@ -33,6 +33,21 @@ jobs:
             throw "Package.appxmanifest not found beside $($p.Name)"
           }
 
+          # Add the PhoneIdentity required by this legacy UWP packaging target.
+          # This edit is made only in the temporary extracted copy, never in the source ZIP.
+          [xml]$manifestXml = Get-Content $manifest
+          $root = $manifestXml.DocumentElement
+          $phoneNs = "http://schemas.microsoft.com/appx/2014/phone/manifest"
+          $existingPhone = $root.SelectSingleNode("*[local-name()='PhoneIdentity']")
+          if (-not $existingPhone) {
+            $root.SetAttribute("xmlns:mp", $phoneNs)
+            $phone = $manifestXml.CreateElement("mp", "PhoneIdentity", $phoneNs)
+            $phone.SetAttribute("PhoneProductId", "{7B1A2C3D-4E5F-4678-9ABC-DEF012345678}")
+            $phone.SetAttribute("PhonePublisherId", "00000000")
+            [void]$root.AppendChild($phone)
+            $manifestXml.Save($manifest)
+          }
+
           # Add the manifest item only to the temporary extracted project.
           # The ZIP committed to the repository remains untouched.
           [xml]$xml = Get-Content $p.FullName

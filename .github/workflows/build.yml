@@ -90,7 +90,10 @@ jobs:
           $pfxPassword = [guid]::NewGuid().ToString("N")
           $securePassword = ConvertTo-SecureString $pfxPassword -AsPlainText -Force
           Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $securePassword | Out-Null
-          Export-Certificate -Cert $cert -FilePath (Join-Path $artifactDir "AntiMicroXboxDev.cer") | Out-Null
+          $certificatePath = Join-Path $artifactDir "AntiMicroXboxDev.cer"
+          Export-Certificate -Cert $cert -FilePath $certificatePath | Out-Null
+          # Trust this temporary CI certificate locally so SignTool can validate its chain.
+          Import-Certificate -FilePath $certificatePath -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
 
           $programFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
           if ([string]::IsNullOrWhiteSpace($programFilesX86)) { throw "Program Files (x86) path could not be resolved" }

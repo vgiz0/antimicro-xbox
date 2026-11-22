@@ -92,7 +92,8 @@ jobs:
           Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $securePassword | Out-Null
           Export-Certificate -Cert $cert -FilePath (Join-Path $artifactDir "AntiMicroXboxDev.cer") | Out-Null
 
-          $signtool = Get-ChildItem "\${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter "signtool.exe" -Recurse | Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } | Sort-Object FullName -Descending | Select-Object -First 1
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+          $signtool = Get-ChildItem $sdkBin -Filter "signtool.exe" -Recurse | Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } | Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) { throw "Windows SDK SignTool was not found" }
           & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $pfxPassword $package.FullName
           if ($LASTEXITCODE -ne 0) { throw "MSIX signing failed" }

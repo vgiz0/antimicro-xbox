@@ -42,7 +42,7 @@ jobs:
           if (-not $existingPhone) {
             $root.SetAttribute("xmlns:mp", $phoneNs)
             $phone = $manifestXml.CreateElement("mp", "PhoneIdentity", $phoneNs)
-            $phone.SetAttribute("PhoneProductId", "{7B1A2C3D-4E5F-4678-9ABC-DEF012345678}")
+            $phone.SetAttribute("PhoneProductId", "7B1A2C3D-4E5F-4678-9ABC-DEF012345678")
             $phone.SetAttribute("PhonePublisherId", "00000000")
             [void]$root.AppendChild($phone)
             $manifestXml.Save($manifest)
